@@ -25,9 +25,12 @@ export function isPushConfigured() {
     process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY &&
     process.env.VAPID_PRIVATE_KEY &&
     process.env.VAPID_SUBJECT &&
-    isStorageConfigured() &&
-    process.env.CRON_SECRET,
+    isStorageConfigured(),
   );
+}
+
+export function isScheduledPushEnabled() {
+  return process.env.SCHEDULED_PUSH_NOTIFICATIONS_ENABLED === "true";
 }
 
 export function pushConfig() {

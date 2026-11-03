@@ -4,6 +4,7 @@ import {
   isCronAuthorized,
   isExpiredSubscriptionError,
   isPushConfigured,
+  isScheduledPushEnabled,
   sendPush,
   type PushDevice,
 } from "../lib";
@@ -108,6 +109,9 @@ async function claimDelivery(deviceHash: string, deliveryKey: string) {
 }
 
 export async function GET(request: Request) {
+  if (!isScheduledPushEnabled()) {
+    return apiError("Scheduled push delivery is disabled until an external scheduler is configured.", 503);
+  }
   if (!isCronAuthorized(request)) return apiError("Unauthorized.", 401);
   if (!isPushConfigured()) return apiError("Push notifications are not configured.", 503);
 

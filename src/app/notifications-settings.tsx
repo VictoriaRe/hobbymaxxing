@@ -262,7 +262,8 @@ export default function NotificationSettings({ preferredTimes, onBack }: Props) 
             ? <button className="secondary-button" type="button" disabled={busy} onClick={disableNotifications}>Turn off</button>
             : <button className="primary-button" type="button" disabled={busy || !configured || !supported || (permission === "denied") || (isIOS && !isStandalone)} onClick={enableNotifications}>{busy ? "One moment…" : "Enable notifications"}</button>}
         </div>
-        {!configured && <p className="notification-note" role="status">Push delivery is not operational until Supabase, VAPID, and scheduled delivery are configured.</p>}
+        {!configured && <p className="notification-note" role="status">Push subscriptions and test notifications need Supabase and VAPID configuration on this deployment.</p>}
+        <p className="notification-note" role="status">Scheduled reminders, weekly recaps, and inactivity nudges are disabled until an external scheduler is configured. Saved times will not trigger notifications yet.</p>
         {!supported && <p className="notification-note">This browser does not support Web Push. Try a supported browser or an iPhone Home Screen app on iOS 16.4 or later.</p>}
         {isIOS && !isStandalone && <p className="notification-note">On iPhone, open this site in Safari, tap Share, then Add to Home Screen. Open the installed app before enabling notifications (iOS 16.4+).</p>}
         {permission === "denied" && <p className="notification-note">Permission is blocked by your browser. Change it in system or browser settings; Hobbymaxxing will not keep asking.</p>}
