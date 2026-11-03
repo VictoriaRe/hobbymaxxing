@@ -194,7 +194,7 @@ export const hobbies: Hobby[] = [
 ];
 
 export function getAllowedActivityLocations(hobby: Hobby, profile: HobbyProfile): ("inside" | "outside")[] {
-  if (hobby.kind === "custom" && !profile.activityLocation) return [];
+  if (hobby.kind === "custom" && !profile.activityLocation) return ["inside", "outside"];
   if (hobby.kind === "running") {
     if (profile.runningLocation === "On a treadmill") return ["inside"];
     if (profile.runningLocation === "Both") return ["inside", "outside"];
@@ -206,7 +206,7 @@ export function getAllowedActivityLocations(hobby: Hobby, profile: HobbyProfile)
   }
   if (hobby.kind === "yoga" || hobby.kind === "pilates" || hobby.kind === "cooking") return ["inside"];
   if (hobby.id === "walking") return ["outside"];
-  if (hobby.id === "pottery" || hobby.id === "puzzles") return ["inside"];
+  if (hobby.id === "puzzles") return ["inside"];
   return ["inside", "outside"];
 }
 

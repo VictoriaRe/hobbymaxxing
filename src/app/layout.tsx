@@ -21,6 +21,10 @@ export const metadata: Metadata = {
     title: "Hobbymaxxing",
   },
   icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "32x32", type: "image/x-icon" },
+      { url: "/app-icon.svg", type: "image/svg+xml" },
+    ],
     apple: "/apple-touch-icon.png",
   },
 };

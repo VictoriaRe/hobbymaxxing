@@ -106,6 +106,14 @@ describe("recommendActivities", () => {
       .some((activity) => activity.id === "draw-outside"));
   });
 
+  it("allows crafts in both settings while keeping indoor-only hobbies restricted", () => {
+    const outdoorPottery = recommendActivities(preferencesFor(["pottery"]), "outside", 30, 2, { includeAll: true });
+    const outdoorKnitting = recommendActivities(preferencesFor(["knitting"]), "outside", 30, 2, { includeAll: true });
+    assert.ok(outdoorPottery.some((activity) => activity.id === "pottery-sketch"));
+    assert.ok(outdoorKnitting.some((activity) => activity.place === "either"));
+    assert.deepEqual(recommendActivities(preferencesFor(["puzzles"]), "outside", 30, 2), []);
+  });
+
   it("keeps candidates available across low, medium, and high energy settings", () => {
     const prefs = preferencesFor(["walking", "running", "photography", "yoga"]);
     for (const energy of [1, 3, 5]) {
@@ -231,6 +239,28 @@ describe("recommendActivities", () => {
       60,
       2,
     )[0]?.place, "outside");
+  });
+
+  it("keeps a custom hobby eligible in either setting when optional location is unanswered", () => {
+    const custom: Hobby = {
+      id: "custom-calligraphy",
+      name: "Calligraphy",
+      icon: "🖋️",
+      color: "lilac",
+      kind: "custom",
+      supplies: [],
+    };
+    const profile = createHobbyProfile();
+    for (const place of ["inside", "outside"] as const) {
+      const suggestions = recommendActivities(
+        preferencesFor([custom.id], { [custom.id]: profile }, [custom]),
+        place,
+        30,
+        3,
+      );
+      assert.equal(suggestions[0]?.hobbyId, custom.id);
+      assert.equal(suggestions[0]?.place, place);
+    }
   });
 
   it("returns fewer than three when explicit exclusions leave fewer eligible candidates", () => {

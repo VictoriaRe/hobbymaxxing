@@ -182,8 +182,17 @@ export default function ActivityExperience({
             </div>
           )}
           {session.activity.resourceUrl && (
-            <a className="session-resource-link" href={session.activity.resourceUrl} target="_blank" rel="noreferrer">
-              {session.activity.resourceLabel ?? "Open saved resource"} ↗
+            <a
+              className={session.activity.videoSource ? "session-resource-link youtube-watch-link" : "session-resource-link"}
+              href={session.activity.resourceUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {session.activity.videoSource === "fallback"
+                ? "Search YouTube results · unverified ↗"
+                : session.activity.verifiedVideo
+                  ? "Watch on YouTube ↗"
+                  : `${session.activity.resourceLabel ?? "Open saved resource"} ↗`}
             </a>
           )}
           <div className="experience-actions">

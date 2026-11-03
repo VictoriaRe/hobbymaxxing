@@ -21,8 +21,9 @@ import Bookshelf from "./bookshelf";
 import HobbyQuestions from "./hobby-questions";
 import ActivityExperience, { type ActivitySession, type DiaryEntry } from "./activity-experience";
 import WeeklyCollage from "./weekly-collage";
+import NotificationSettings from "./notifications-settings";
 
-type Screen = "welcome" | "hobbies" | "details" | "bookshelf" | "times" | "dashboard" | "activity" | "diary" | "collage";
+type Screen = "welcome" | "hobbies" | "details" | "bookshelf" | "times" | "activity-flow" | "dashboard" | "activity" | "diary" | "collage" | "notifications";
 type YouTubeResponse = { configured: boolean; videos: YouTubeVideo[]; error?: string };
 
 const STORAGE_KEY = "hobbymaxxing-preferences";
@@ -43,6 +44,7 @@ export default function Home() {
   const [place, setPlace] = useState<"inside" | "outside">("inside");
   const [minutes, setMinutes] = useState(30);
   const [energy, setEnergy] = useState(3);
+  const [activityFlowStep, setActivityFlowStep] = useState(0);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [bookshelfOpen, setBookshelfOpen] = useState(false);
@@ -53,23 +55,28 @@ export default function Home() {
   const [localHour, setLocalHour] = useState(12);
   const [journalPromptIndex, setJournalPromptIndex] = useState(0);
   const [recommendationOffset, setRecommendationOffset] = useState(0);
+  const [activeCardIndex, setActiveCardIndex] = useState(0);
   const [showAllActivities, setShowAllActivities] = useState(false);
   const [activityDurationOverrides, setActivityDurationOverrides] = useState<Record<string, number>>({});
   const [youtubeRecommendations, setYoutubeRecommendations] = useState<Record<string, { requestKey: string; configured: boolean; videos: YouTubeVideo[]; error?: string }>>({});
   const [currentSession, setCurrentSession] = useState<ActivitySession | null>(null);
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
   const diaryEntriesRef = useRef<DiaryEntry[]>([]);
+  const recommendationRailRef = useRef<HTMLDivElement>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [timerNow, setTimerNow] = useState(0);
 
   useEffect(() => {
     const restorePreferences = window.setTimeout(() => {
+      let completedOnboarding = false;
+      const deepLink = new URLSearchParams(window.location.search).get("view");
       try {
         const saved = window.localStorage.getItem(STORAGE_KEY);
         if (saved) {
           const parsed = migratePreferences(JSON.parse(saved));
           if (parsed.profiles && parsed.preferredTimes) {
             setPreferences(parsed);
+            completedOnboarding = parsed.completed;
             if (parsed.completed) setScreen("dashboard");
             else if ((parsed.selectedHobbyIds ?? []).length > 0) setScreen("hobbies");
           }
@@ -100,6 +107,13 @@ export default function Home() {
       } catch {
         window.localStorage.removeItem(SESSION_KEY);
         window.localStorage.removeItem(DIARY_KEY);
+      }
+      if (deepLink === "diary") setScreen("diary");
+      else if (deepLink === "ideas" && completedOnboarding) setScreen("dashboard");
+      if (deepLink) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("view");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
       }
       setTimerNow(Date.now());
       setSessionLoaded(true);
@@ -163,6 +177,35 @@ export default function Home() {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
     }
   }, [hasLoaded, preferences]);
+
+  useEffect(() => {
+    if (!hasLoaded) return;
+    const updateLastActive = async () => {
+      let token: string | null;
+      try {
+        token = window.localStorage.getItem("hobbymaxxing-push-device-token");
+      } catch (error) {
+        console.error("Could not read the notification device token.", error);
+        return;
+      }
+      if (!token || !("Notification" in window) || Notification.permission !== "granted") return;
+      try {
+        const response = await fetch("/api/notifications/heartbeat", {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) console.error("Could not update notification activity:", response.status);
+      } catch (error) {
+        console.error("Could not update notification activity.", error);
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") void updateLastActive();
+    };
+    void updateLastActive();
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [hasLoaded]);
 
   const allHobbies = [...hobbies, ...(preferences.customHobbies ?? [])];
   const selectedHobbyIds = preferences.selectedHobbyIds ?? Object.keys(preferences.profiles);
@@ -363,7 +406,40 @@ export default function Home() {
 
   function finishOnboarding() {
     setPreferences((current) => ({ ...current, completed: true }));
-    setScreen("dashboard");
+    setActivityFlowStep(0);
+    setScreen("activity-flow");
+  }
+
+  function openActivityFlow() {
+    setActivityFlowStep(0);
+    setScreen("activity-flow");
+  }
+
+  function showRecommendationCard(index: number) {
+    const cards = recommendationRailRef.current?.querySelectorAll<HTMLElement>(".activity-card");
+    const card = cards?.[index];
+    if (!card || !recommendationRailRef.current) return;
+    const rail = recommendationRailRef.current;
+    const railLeft = rail.getBoundingClientRect().left;
+    recommendationRailRef.current.scrollTo({
+      left: rail.scrollLeft + card.getBoundingClientRect().left - railLeft,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+    setActiveCardIndex(index);
+  }
+
+  function updateActiveCard() {
+    const rail = recommendationRailRef.current;
+    if (!rail) return;
+    const railLeft = rail.getBoundingClientRect().left;
+    const cards = [...rail.querySelectorAll<HTMLElement>(".activity-card")];
+    const nearestIndex = cards.reduce((nearest, card, index) => {
+      const nearestLeft = cards[nearest]?.getBoundingClientRect().left ?? railLeft;
+      return Math.abs(card.getBoundingClientRect().left - railLeft) < Math.abs(nearestLeft - railLeft)
+        ? index
+        : nearest;
+    }, 0);
+    setActiveCardIndex(nearestIndex);
   }
 
   function startOver() {
@@ -514,7 +590,10 @@ export default function Home() {
         {currentSession && screen !== "activity" && (
           <button className="text-button return-session-button" type="button" onClick={() => setScreen("activity")}>Return to activity</button>
         )}
-        {screen !== "welcome" && screen !== "activity" && screen !== "diary" && !currentSession && (
+        {screen === "activity-flow" && !currentSession && (
+          <button className="text-button" type="button" onClick={openActivityFlow}>Restart flow</button>
+        )}
+        {screen !== "welcome" && screen !== "activity" && screen !== "diary" && screen !== "notifications" && screen !== "activity-flow" && !currentSession && (
           <button className="text-button" type="button" onClick={startOver}>Start over</button>
         )}
       </header>
@@ -636,6 +715,72 @@ export default function Home() {
         </section>
       )}
 
+      {screen === "activity-flow" && (
+        <section className="activity-flow" aria-labelledby="activity-flow-title">
+          <div className="activity-flow-progress" aria-label={`Question ${activityFlowStep + 1} of 3`}>
+            <span>{activityFlowStep + 1} of 3</span>
+            <div className="flow-progress-track" aria-hidden="true">
+              <span style={{ width: `${((activityFlowStep + 1) / 3) * 100}%` }} />
+            </div>
+          </div>
+          <div className="activity-flow-content" key={activityFlowStep} aria-live="polite" aria-atomic="true">
+            <p className="eyebrow"><span className="eyebrow-dot" /> A moment for yourself</p>
+            <h1 id="activity-flow-title">
+              {activityFlowStep === 0
+                ? "Staying in or going out?"
+                : activityFlowStep === 1
+                  ? "How’s your energy?"
+                  : "How much time have you got?"}
+            </h1>
+            <p className="activity-flow-subtitle">
+              {activityFlowStep === 0
+                ? "We’ll find something lovely that fits where you are."
+                : activityFlowStep === 1
+                  ? "This helps us order your ideas, not rule anything out."
+                  : "Think of this as your maximum; a shorter activity is always welcome."}
+            </p>
+            {activityFlowStep === 0 && (
+              <div className="flow-choice-grid" role="group" aria-label="Choose a location">
+                <button className="flow-choice" type="button" aria-pressed={place === "inside"} onClick={() => { setPlace("inside"); setRecommendationOffset(0); setShowAllActivities(false); setActiveCardIndex(0); setActivityFlowStep(1); }}>
+                  <span aria-hidden="true">🏡</span><strong>Stay in</strong>
+                </button>
+                <button className="flow-choice" type="button" aria-pressed={place === "outside"} onClick={() => { setPlace("outside"); setRecommendationOffset(0); setShowAllActivities(false); setActiveCardIndex(0); setActivityFlowStep(1); }}>
+                  <span aria-hidden="true">🌿</span><strong>Go out</strong>
+                </button>
+              </div>
+            )}
+            {activityFlowStep === 1 && (
+              <div className="flow-choice-grid energy-choice-grid" role="group" aria-label="Choose your energy">
+                {[
+                  { value: 1, icon: "☁️", label: "Low", description: "Something gentle" },
+                  { value: 3, icon: "🌷", label: "Some", description: "A little motivation" },
+                  { value: 5, icon: "⚡", label: "Lots", description: "Ready to move" },
+                ].map((option) => (
+                  <button className="flow-choice" type="button" aria-pressed={energy === option.value} key={option.value} onClick={() => { setEnergy(option.value); setRecommendationOffset(0); setShowAllActivities(false); setActiveCardIndex(0); setActivityFlowStep(2); }}>
+                    <span aria-hidden="true">{option.icon}</span><strong>{option.label}</strong><small>{option.description}</small>
+                  </button>
+                ))}
+              </div>
+            )}
+            {activityFlowStep === 2 && (
+              <div className="flow-choice-grid time-choice-grid" role="group" aria-label="Choose your maximum available time">
+                {[15, 30, 60].map((option) => (
+                  <button className="flow-choice" type="button" aria-pressed={minutes === option} key={option} onClick={() => { setMinutes(option); setRecommendationOffset(0); setShowAllActivities(false); setActiveCardIndex(0); setScreen("dashboard"); }}>
+                    <span aria-hidden="true">◷</span><strong>{option} minutes</strong>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="activity-flow-actions">
+            <button className="quiet-button" type="button" onClick={() => activityFlowStep === 0 ? setScreen("dashboard") : setActivityFlowStep((step) => step - 1)}>
+              {activityFlowStep === 0 ? "Back to ideas" : "← Back"}
+            </button>
+            <button className="quiet-button restart-flow-button" type="button" onClick={openActivityFlow}>Restart flow</button>
+          </div>
+        </section>
+      )}
+
       {screen === "bookshelf" && (
         <section className="onboarding" aria-labelledby="bookshelf-title">
           <Bookshelf
@@ -701,6 +846,13 @@ export default function Home() {
         </section>
       )}
 
+      {screen === "notifications" && (
+        <NotificationSettings
+          preferredTimes={preferences.preferredTimes}
+          onBack={() => setScreen("dashboard")}
+        />
+      )}
+
       {screen === "dashboard" && (
         <section className="dashboard" aria-labelledby="dashboard-title">
           <div className="dashboard-heading">
@@ -712,36 +864,21 @@ export default function Home() {
             <div className="day-stamp" aria-hidden="true"><span>YOUR</span><strong>OFFLINE<br />HOUR</strong><span>STARTS HERE</span></div>
           </div>
 
-          <div className="prompt-panel">
-            <div className="prompt-group">
-              <h2>Inside or outside?</h2>
-              <div className="segmented-control" role="group" aria-label="Where would you like to be?">
-                <button className={place === "inside" ? "active" : ""} aria-pressed={place === "inside"} type="button" onClick={() => { setPlace("inside"); setRecommendationOffset(0); setShowAllActivities(false); }}><span aria-hidden="true">⌂</span> Inside</button>
-                <button className={place === "outside" ? "active" : ""} aria-pressed={place === "outside"} type="button" onClick={() => { setPlace("outside"); setRecommendationOffset(0); setShowAllActivities(false); }}><span aria-hidden="true">☼</span> Outside</button>
-              </div>
-            </div>
-            <div className="prompt-group">
-              <h2>How much time have you got?</h2>
-              <div className="time-control" role="group" aria-label="Available time">
-                {[15, 30, 60].map((option) => <button className={minutes === option ? "active" : ""} aria-pressed={minutes === option} type="button" key={option} onClick={() => { setMinutes(option); setRecommendationOffset(0); setShowAllActivities(false); }}><strong>{option}</strong><span>min</span></button>)}
-              </div>
-            </div>
-            <div className="prompt-group energy-group">
-              <h2>What’s your energy like?</h2>
-              <div className="energy-control" role="group" aria-label={`Energy level ${energy} of 5`}>
-                {[1, 2, 3, 4, 5].map((level) => <button className={level <= energy ? "filled" : ""} type="button" aria-label={`Energy level ${level} of 5`} aria-pressed={energy === level} key={level} onClick={() => { setEnergy(level); setRecommendationOffset(0); setShowAllActivities(false); }}><span aria-hidden="true">✦</span></button>)}
-                <span className="energy-caption">{energy < 2 ? "Very gentle" : energy < 4 ? "Somewhere in the middle" : "Ready to go"}</span>
-              </div>
-            </div>
+          <div className="shortlist-context">
+            <p><span aria-hidden="true">{place === "inside" ? "🏡" : "🌿"}</span> {place === "inside" ? "Staying in" : "Going out"}</p>
+            <p><span aria-hidden="true">{energy === 1 ? "☁️" : energy === 5 ? "⚡" : "🌷"}</span> {energy === 1 ? "Low energy" : energy === 5 ? "Lots of energy" : "Some energy"}</p>
+            <p><span aria-hidden="true">◷</span> Up to {minutes} minutes</p>
+            <button type="button" onClick={openActivityFlow}>Adjust answers</button>
           </div>
 
           <div className="recommendation-heading">
-            <div><p className="eyebrow">Made for this moment</p><h2>Your little shortlist</h2></div>
+            <div><p className="eyebrow">Made for this moment</p><h2>Your little shortlist ✨</h2></div>
             <span className="results-count">{(showAllActivities ? allSuitableActivities : recommendations).length} {(showAllActivities ? allSuitableActivities : recommendations).length === 1 ? "idea" : "ideas"}</span>
           </div>
           {recommendations.length > 0 ? (
             <>
-            <div className="recommendation-grid">
+            <div className="recommendation-carousel" role="region" aria-roledescription="carousel" aria-label={showAllActivities ? "All eligible activities" : "Your activity recommendations"}>
+            <div className="recommendation-grid" ref={recommendationRailRef} onScroll={updateActiveCard} tabIndex={0} aria-label="Swipe or scroll to browse activity cards">
               {recommendationActivities.map((activity, index) => {
                 const hobby = allHobbies.find((item) => item.id === activity.hobbyId);
                 if (!hobby) return null;
@@ -754,7 +891,7 @@ export default function Home() {
                 const actualDurationLabel = activity.durationSeconds !== undefined
                   ? formatDiaryDuration(activity.durationSeconds)
                   : activity.durationVerified === false
-                    ? `${activity.duration} min session · link length unverified`
+                    ? `${activity.duration} min plan · link length unverified`
                     : `${activity.duration} min`;
                 const durationLabel = activity.durationSeconds !== undefined && activity.availableTimeMinutes !== undefined &&
                   activity.durationSeconds !== activity.availableTimeMinutes * 60
@@ -765,12 +902,13 @@ export default function Home() {
                       ? `${actualDurationLabel} activity · ${activity.availableTimeMinutes} min available`
                       : actualDurationLabel;
                 return (
-                  <article className={`activity-card activity-${index + 1}`} key={activity.id}>
+                  <article className={`activity-card activity-${index + 1}`} role="group" aria-roledescription="slide" aria-label={`${index + 1} of ${recommendationActivities.length}`} key={activity.id}>
                     {activity.thumbnailUrl && <a className="activity-thumbnail-link" href={activity.resourceUrl} target="_blank" rel="noreferrer" aria-label={`Watch ${activity.title}`}><Image className="activity-thumbnail" src={activity.thumbnailUrl} alt="" width={480} height={270} unoptimized /></a>}
                     <div className="activity-topline"><span className={`mini-icon ${hobby.color}`} aria-hidden="true">{hobby.icon}</span><span className="activity-duration">{durationLabel}</span></div>
                     <p className="activity-category">{hobby.name} · {activity.place === "either" ? "Anywhere" : activity.place}</p>
                     <h3>{activity.title}</h3>
                     <p className="activity-description">{activity.description}</p>
+                    {activity.videoChannel && <p className="video-instructor">Instructor · {activity.videoChannel}</p>}
                     {activity.journalPrompt && <div className="journal-prompt"><span>{activity.journalPrompt.category}</span><p>{activity.journalPrompt.text}</p><button type="button" onClick={() => setJournalPromptIndex((index) => index + 1)}>Give me another prompt <span aria-hidden="true">↻</span></button><button type="button" onClick={() => updateProfile(activity.hobbyId, { journalingSessionMode: "free" })}>Free Writing instead</button></div>}
                     {activity.hobbyId === "journaling" && !activity.journalPrompt && (profile.journalingPromptPreference === "Yes, give me prompts." || profile.journalingPromptPreference === "Sometimes, let me choose.") && <div className="journal-prompt"><span>Free writing</span><p>Follow your own thoughts for {activity.duration} minutes.</p><button type="button" onClick={() => updateProfile(activity.hobbyId, { journalingSessionMode: "prompt" })}>Give me a prompt</button></div>}
                     {activity.durationSeconds === undefined && <div className="activity-duration-control" aria-label={`${hobby.name} session duration, ${activity.duration} minutes`}>
@@ -781,22 +919,38 @@ export default function Home() {
                           : `${minutes} min available · adjust session`}</span>
                       <div><button type="button" aria-label={`Shorten ${hobby.name.toLowerCase()} timer by one minute`} disabled={activity.duration <= 1} onClick={() => adjustActivityDuration(activity, -1)}>−</button><strong>{activity.duration} min</strong><button type="button" aria-label={`Lengthen ${hobby.name.toLowerCase()} timer by one minute`} disabled={activity.duration >= minutes} onClick={() => adjustActivityDuration(activity, 1)}>+</button></div>
                     </div>}
-                    <div className="activity-footer"><span>{activity.resourceUrl ? <a href={activity.resourceUrl} target="_blank" rel="noreferrer">{activity.resourceLabel ?? "Open saved link"} ↗</a> : customMaterials.length ? `Your notes: ${customMaterials.join(", ")}` : missing.length === 0 ? "A little time for yourself" : `You’ll need: ${missing.join(", ")}`}</span></div>
-                    <button className="activity-start-button" type="button" onClick={() => startActivity(activity, hobby)}>Choose this activity <span aria-hidden="true">→</span></button>
+                    <div className="activity-footer"><span>{activity.resourceUrl
+                      ? <a className={activity.videoSource ? "youtube-action" : ""} href={activity.resourceUrl} target="_blank" rel="noreferrer">
+                          {activity.videoSource === "fallback"
+                            ? "Search YouTube results · unverified ↗"
+                            : activity.verifiedVideo
+                              ? "Watch on YouTube ↗"
+                              : `${activity.resourceLabel ?? "Open saved link"} ↗`}
+                        </a>
+                      : customMaterials.length ? `Your notes: ${customMaterials.join(", ")}` : missing.length === 0 ? "A little time for yourself" : `You’ll need: ${missing.join(", ")}`}</span></div>
+                    <button className="activity-start-button" type="button" onClick={() => startActivity(activity, hobby)}>Lock this in 💜 <span aria-hidden="true">→</span></button>
                   </article>
                 );
               })}
             </div>
+            {(showAllActivities ? allSuitableActivities : recommendations).length > 1 && (
+              <div className="carousel-controls">
+                <button className="carousel-arrow" type="button" aria-label="Previous activity" disabled={activeCardIndex === 0} onClick={() => showRecommendationCard(activeCardIndex - 1)}>←</button>
+                <span aria-live="polite">{Math.min(activeCardIndex + 1, (showAllActivities ? allSuitableActivities : recommendations).length)} of {(showAllActivities ? allSuitableActivities : recommendations).length}</span>
+                <button className="carousel-arrow" type="button" aria-label="Next activity" disabled={activeCardIndex >= (showAllActivities ? allSuitableActivities : recommendations).length - 1} onClick={() => showRecommendationCard(activeCardIndex + 1)}>→</button>
+              </div>
+            )}
+            </div>
             {allSuitableActivities.length < 3 && <p className="recommendation-limit-note" role="status">Only {allSuitableActivities.length} suitable {allSuitableActivities.length === 1 ? "idea fits" : "ideas fit"} your current setting, time, and activity preferences.</p>}
             <div className="recommendation-actions">
-              {allSuitableActivities.length > 3 && <button className="quiet-button" type="button" onClick={() => setShowAllActivities((showing) => !showing)}>{showAllActivities ? "Show shortlist" : `See all activities (${allSuitableActivities.length})`}</button>}
-              {allSuitableActivities.length > 3 && !showAllActivities && <button className="secondary-button" type="button" onClick={() => setRecommendationOffset((offset) => offset + 3)}>Show me different ideas <span aria-hidden="true">↻</span></button>}
+              {allSuitableActivities.length > 3 && <button className="quiet-button" type="button" onClick={() => { setShowAllActivities((showing) => !showing); setActiveCardIndex(0); recommendationRailRef.current?.scrollTo({ left: 0 }); }}>{showAllActivities ? "Show shortlist" : `See all activities (${allSuitableActivities.length})`}</button>}
+              {allSuitableActivities.length > 3 && !showAllActivities && <button className="secondary-button" type="button" onClick={() => { setRecommendationOffset((offset) => offset + 3); setActiveCardIndex(0); recommendationRailRef.current?.scrollTo({ left: 0 }); }}>Show me different ideas <span aria-hidden="true">↻</span></button>}
             </div>
             </>
           ) : (
-            <div className="empty-state"><span aria-hidden="true">🌱</span><h3>{videoDiscoveryLoading ? "Finding a video that fits…" : "No ideas fit these filters yet."}</h3><p>{videoDiscoveryLoading ? "Checking saved videos and your instructor preferences." : selectedHobbies.some((hobby) => hobby.kind === "custom" && !preferences.profiles[hobby.id]?.activityLocation) ? "Choose where this custom hobby can be done in its preferences, or try another setting or more available time." : "Try another setting or more available time, or review any activities you excluded."}</p></div>
+            <div className="empty-state"><span aria-hidden="true">🌱</span><h3>{videoDiscoveryLoading ? "Finding a video that fits…" : "No ideas fit those choices yet."}</h3><p>{videoDiscoveryLoading ? "Checking saved videos and your instructor preferences." : "Try a different setting or more available time, or review any activities you excluded."}</p></div>
           )}
-          <footer className="dashboard-footer"><span>Small moments make a life.</span><div className="dashboard-footer-actions">{preferences.profiles.reading && <button type="button" onClick={() => setScreen("bookshelf")}>My bookshelf <span aria-hidden="true">↗</span></button>}<button type="button" onClick={() => setScreen("diary")}>My diary <span aria-hidden="true">↗</span></button><button type="button" onClick={() => { setShowCustomHobbyForm(false); setScreen("hobbies"); }}>Edit my hobbies <span aria-hidden="true">↗</span></button></div></footer>
+          <footer className="dashboard-footer"><span>Small moments make a life.</span><div className="dashboard-footer-actions">{preferences.profiles.reading && <button type="button" onClick={() => setScreen("bookshelf")}>My bookshelf <span aria-hidden="true">↗</span></button>}<button type="button" onClick={() => setScreen("diary")}>My diary <span aria-hidden="true">↗</span></button><button type="button" onClick={() => setScreen("notifications")}>Notification settings <span aria-hidden="true">↗</span></button><button type="button" onClick={() => { setShowCustomHobbyForm(false); setScreen("hobbies"); }}>Edit my hobbies <span aria-hidden="true">↗</span></button></div></footer>
         </section>
       )}
 
